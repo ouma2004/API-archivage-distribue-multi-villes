@@ -1,0 +1,19 @@
+# Namespace de l'API
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+
+---
+# Un namespace PAR VILLE — isolation réelle entre Fès/Casa/Rabat
+{{- range $villeName, $ville := .Values.villes }}
+{{- if $ville.enabled }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ville.namespace }}
+  labels:
+    ville: {{ $villeName }}
+---
+{{- end }}
+{{- end }}

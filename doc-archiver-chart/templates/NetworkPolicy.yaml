@@ -1,0 +1,30 @@
+# NetworkPolicy — isolation réseau réelle entre villes.
+# Chaque namespace de ville n'accepte du trafic entrant QUE depuis :
+#   - lui-même (communication interne MinIO/PostgreSQL)
+#   - le namespace de l'API (qui a besoin de lire/écrire dans toutes les villes)
+# Aucune ville ne peut directement contacter une autre ville.
+
+{{- range $villeName, $ville := .Values.villes }}
+{{- if $ville.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-{{ $villeName }}
+  namespace: {{ $ville.namespace }}
+spec:
+  podSelector: {}            # s'applique à tous les pods du namespace
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Autorise les pods du même namespace (communication interne MinIO/PG)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ville.namespace }}
+        # Autorise l'API (namespace différent) à se connecter
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.namespace }}
+---
+{{- end }}
+{{- end }}

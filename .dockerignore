@@ -1,0 +1,11 @@
+# Cache
+__pycache__/
+*.pyc
+.cache/
+.pytest_cache/
+
+# Données locales
+*.tar
+*.zip
+uploads/
+tmp/

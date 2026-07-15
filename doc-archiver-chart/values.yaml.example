@@ -1,0 +1,125 @@
+# values.yaml.example — Exemple complet avec le système multi-projet
+#
+# ⚠️ Ce fichier est un EXEMPLE. Copiez-le en `values.yaml`
+#
+# Exemple : cp values.yaml.example values.yaml
+
+namespace: doc-archiver        # namespace de l'API uniquement
+
+# ── Image API (construite depuis ton Dockerfile) ─────────────────────────
+api:
+  image:
+    repository: doc-archiver-api    # à builder localement
+    tag: latest
+  port: 8000
+
+  # ── Authentification ────────────────────────────────────────────────
+  # Mode legacy — un seul secret partagé, bucket "documents" unique par ville.
+  # Toujours fonctionnel pour compatibilité, mais sans isolation par projet.
+  apiToken: dev-secret-token
+
+  # Token admin — voit TOUS les projets d'une ville, tous buckets confondus.
+  # À réserver à un nombre restreint de personnes (jamais dans un champ Odoo
+  # visible par plusieurs utilisateurs).
+  adminToken: "CHANGEZ-MOI-admin-secret"
+
+  # Table des projets — un token = un projet = un bucket + un compte MinIO
+  # dédié. Format JSON, une entrée par projet.
+  #
+  # Champs par projet :
+  #   name        : nom affiché (résolu via /whoami)
+  #   bucket      : bucket MinIO dédié (doit exister, voir README section
+  #                 "Créer un nouveau projet")
+  #   access_key  : compte IAM MinIO dédié à ce projet (pas le compte root)
+  #   secret_key  : mot de passe de ce compte IAM
+  #
+  # ⚠️ access_key/secret_key doivent correspondre EXACTEMENT à ce qui a été
+  # créé via `mc admin user add` — la moindre différence fait échouer
+  # silencieusement toutes les requêtes de ce projet (401/403 MinIO).
+  projectsJson: '{"tok_projetA_a1b2c3d4":{"name":"ProjetA","bucket":"documents-projeta","access_key":"adminprojeta","secret_key":"CHANGEZ-MOI-SecretProjetA"},"tok_projetB_e5f6g7h8":{"name":"ProjetB","bucket":"documents-projetb","access_key":"adminprojetb","secret_key":"CHANGEZ-MOI-SecretProjetB"}}'
+
+
+  maxFileSizeMb: "50"
+  service:
+    type: NodePort
+    nodePort: 30800
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "1.5"
+      memory: 2Gi
+
+# ── PostgreSQL (commun à toutes les villes, paramètres identiques) ───────
+postgres:
+  image: postgres:16-alpine
+  user: postgres
+  password: postgres
+  database: db
+  storage: 1Gi
+  storageClassName: local-path   # adapter selon `kubectl get storageclass`
+
+# ── MinIO (commun, sauf replicas qui varie par ville) ─────────────────────
+minio:
+  image:
+    repository: minio/minio
+    tag: latest
+  rootUser: minioadmin
+  rootPassword: minioadmin        # ⚠️ CHANGEZ ceci en environnement réel
+  apiPort: 9000
+  consolePort: 9001
+  storage: 1Gi
+  storageClassName: local-path
+  resources:
+    requests:
+      cpu: 100m       # réduit pour tenir sur une petite VM avec 4 replicas
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+# ── Définition des villes ──────────────────────────────────────────────────
+# siteType : CLUSTER ou SINGLE_SERVER (utilisé par config.py de l'API)
+# minioReplicas : nombre de nœuds MinIO pour cette ville
+# backupOf : ville de secours si SINGLE_SERVER (réplication automatique)
+# namespace : CHAQUE VILLE A SON PROPRE NAMESPACE → isolation réelle
+villes:
+  fes:
+    enabled: false
+    remoteApiUrl: "http://10.10.0.1:30800"   # IP VPN Azure
+    namespace: ville-fes
+    siteId: 1
+    siteType: CLUSTER
+    minioReplicas: 4
+    backupOf: ""
+    minioApiNodePort: 30900
+    minioConsoleNodePort: 30901
+    postgresNodePort: 30432
+
+  casa:
+    enabled: false
+    remoteApiUrl: "http://10.10.0.2:30800"   # IP VPN PC local
+    namespace: ville-casa
+    siteId: 2
+    siteType: CLUSTER
+    minioReplicas: 4
+    backupOf: ""
+    minioPublic: "10.10.0.2:30902"
+    minioApiNodePort: 30902
+    minioConsoleNodePort: 30903
+    postgresNodePort: 30433
+
+  rabat:
+    enabled: false
+    remoteApiUrl: "http://10.10.0.2:30800"   # IP VPN PC local
+    namespace: ville-rabat
+    siteId: 3
+    siteType: SINGLE_SERVER
+    minioEndpoint: minio-rabat.ville-rabat.svc.cluster.local:9000
+    minioPublic: 192.168.49.2:30904
+    minioReplicas: 1
+    backupOf: fes           # réplication automatique vers Fès si Rabat tombe
+    minioApiNodePort: 30904
+    minioConsoleNodePort: 30905
+    postgresNodePort: 30434

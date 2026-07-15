@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.api.port }}
+          env:
+            - name: API_TOKEN
+              value: {{ .Values.api.apiToken | quote }}
+            - name: ADMIN_TOKEN
+              value: {{ .Values.api.adminToken | default "" | quote }}
+            - name: PROJECTS_JSON
+              value: {{ .Values.api.projectsJson | default "" | quote }}
+
+            - name: MAX_FILE_SIZE_MB
+              value: {{ .Values.api.maxFileSizeMb | quote }}
+
+            - name: VILLES_ACTIVES
+              value: "{{ range $villeName, $ville := .Values.villes }}{{ if $ville.enabled }}{{ $villeName }},{{ end }}{{ end }}"
+
+            {{- range $villeName, $ville := .Values.villes }}
+            {{- if not $ville.enabled }}
+            {{- if $ville.remoteApiUrl }}
+            - name: {{ printf "REMOTE_API_%s" ($villeName | upper) }}
+              value: {{ $ville.remoteApiUrl | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- range $villeName, $ville := .Values.villes }}
+            {{- if $ville.enabled }}
+            - name: {{ printf "%s_POSTGRES_HOST" ($villeName | upper) }}
+              value: {{ default (printf "postgres-%s.%s.svc.cluster.local" $villeName $ville.namespace) $ville.postgresHost | quote }}
+
+            - name: {{ printf "%s_MINIO_ENDPOINT" ($villeName | upper) }}
+              value: {{ default (printf "minio-%s.%s.svc.cluster.local:%v" $villeName $ville.namespace $.Values.minio.apiPort) $ville.minioEndpoint | quote }}
+
+            - name: {{ printf "%s_MINIO_PUBLIC" ($villeName | upper) }}
+              value: {{ $ville.minioPublic | quote }}
+
+
+            - name: {{ printf "%s_SITE_TYPE" ($villeName | upper) }}
+              value: {{ $ville.siteType | quote }}
+
+            - name: {{ printf "%s_BACKUP_OF" ($villeName | upper) }}
+              value: {{ $ville.backupOf | quote }}
+
+            - name: {{ printf "%s_SITE_ID" ($villeName | upper) }}
+              value: {{ $ville.siteId | quote }}
+            {{- end }}
+            {{- end }}
+
+            - name: VPN_IP_FES
+              value: "api.{{ .Values.namespace }}.svc.cluster.local"
+
+            - name: VPN_IP_CASA
+              value: "api.{{ .Values.namespace }}.svc.cluster.local"
+
+            - name: VPN_IP_RABAT
+              value: "api.{{ .Values.namespace }}.svc.cluster.local"
+
+          resources:
+            requests:
+              cpu: {{ .Values.api.resources.requests.cpu }}
+              memory: {{ .Values.api.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.api.resources.limits.cpu }}
+              memory: {{ .Values.api.resources.limits.memory }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    app: api
+  ports:
+    - port: {{ .Values.api.port }}
+      targetPort: {{ .Values.api.port }}
+      {{- if eq .Values.api.service.type "NodePort" }}
+      nodePort: {{ .Values.api.service.nodePort }}
+      {{- end }}

@@ -1,0 +1,85 @@
+{{- range $villeName, $ville := .Values.villes }}
+{{- if $ville.enabled }}
+---
+# ═══════════════════════════════════════════════════════════════════════
+# PostgreSQL — Ville : {{ $villeName }} (namespace={{ $ville.namespace }})
+# ═══════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-{{ $villeName }}
+  namespace: {{ $ville.namespace }}
+spec:
+  serviceName: postgres-{{ $villeName }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-{{ $villeName }}
+  template:
+    metadata:
+      labels:
+        app: postgres-{{ $villeName }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ $.Values.postgres.image }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ $.Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ $.Values.postgres.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ $.Values.postgres.database | quote }}
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ $.Values.postgres.user | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+       name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ $.Values.postgres.storageClassName }}
+        resources:
+          requests:
+            storage: {{ $.Values.postgres.storage }}
+
+---
+# Service headless interne — utilisé par l'API (cross-namespace, voir api.yaml)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-{{ $villeName }}
+  namespace: {{ $ville.namespace }}
+spec:
+  clusterIP: None
+  selector:
+    app: postgres-{{ $villeName }}
+  ports:
+    - port: 5432
+      name: postgres
+
+---
+# Service NodePort — accès externe optionnel (debug avec pgAdmin)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-{{ $villeName }}-external
+  namespace: {{ $ville.namespace }}
+spec:
+  type: NodePort
+  selector:
+    app: postgres-{{ $villeName }}
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: {{ $ville.postgresNodePort }}
+{{- end }}
+{{- end }}

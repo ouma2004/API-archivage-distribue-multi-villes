@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python version
+.python-version
+
+# uv
+.uv/
+uv.lock
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Secrets
+client_secrets.json
+service_account.json
+credentials.json
+token.json
+
+# Helm values réelles (contient les vrais secrets — utiliser values.yaml.example)
+doc-archiver-chart/values.yaml
+
+# Pytest
+.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Docker
+*.tar
+
+# Helm (optionnel)
+*.tgz
+
+# Kubernetes
+*.kubeconfig
+
+# MinIO 
+minio-data/
+
+# Database locale
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
