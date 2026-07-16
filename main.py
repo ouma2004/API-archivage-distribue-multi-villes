@@ -121,22 +121,13 @@ def whoami(project = Depends(verify_token)):
     return {"mode": "project", "project_name": project.get("name")}
 
 
-@app.post("/documents", tags=["Archives"])
-async def upload_document(
-    ville: str = Query(..., description="Ville cible : " + ", ".join(sorted(VILLES_VALIDES))),
-    backup_ville: str | None = Query(None, description="Ville de secours (optionnel)"),
-    file: UploadFile = File(...),
-    project = Depends(verify_token),
-):
-    verify_ville(ville)
-    if backup_ville:
-        verify_ville(backup_ville)
-
+async def _process_single_upload(ville: str, backup_ville: str | None,
+                                   file: UploadFile, project) -> dict:
     content = await file.read()
     if len(content) == 0:
-        raise HTTPException(status_code=400, detail="Fichier vide")
+        raise HTTPException(status_code=400, detail=f"Fichier vide : {file.filename}")
     if len(content) > MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"Fichier > {MAX_FILE_SIZE_MB} Mo")
+        raise HTTPException(status_code=400, detail=f"{file.filename} dépasse {MAX_FILE_SIZE_MB} Mo")
 
     checksum = hashlib.sha256(content).hexdigest()
     ext = Path(file.filename).suffix.lower() if file.filename else ""
@@ -150,29 +141,56 @@ async def upload_document(
             file_type=ext.lstrip(".") or "bin", nb_pages=1, checksum=checksum,
             project_bucket=(project["bucket"] if project and not project.get("is_admin") else None),
         )
-
         schedule_replication(
             ville=ville, id_doc=id_doc, filename=file.filename,
             archive_path=minio_key, file_type=ext.lstrip(".") or "bin",
             backup_ville_override=backup_ville,
         )
-
         try:
             download_url = get_file_url(ville, minio_key, project=project)
         except Exception as e:
             print(f" [WARN] URL présignée indisponible pour {minio_key} : {e}")
             download_url = None
 
-        return JSONResponse(content={
+        return {
             "document_id": id_doc, "filename": file.filename, "checksum": checksum,
             "storage_server": ville, "backup_server": backup_ville,
             "archive_state": "ARCHIVED", "archive_path": minio_key,
             "size_bytes": len(content), "content_type": file.content_type,
             "download_url": download_url,
-        })
+        }
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
+
+
+@app.post("/documents", tags=["Archives"])
+async def upload_document(
+    ville: str = Query(..., description="Ville cible : " + ", ".join(sorted(VILLES_VALIDES))),
+    backup_ville: str | None = Query(None, description="Ville de secours (optionnel)"),
+    files: list[UploadFile] = File(..., description="Un ou plusieurs fichiers"),
+    project = Depends(verify_token),
+):
+    """
+    Upload un ou plusieurs fichiers en un seul appel. Aucune restriction de
+    type (PDF, image, zip, .bak, vidéo, ou tout autre). Chaque fichier est
+    traité indépendamment : un échec sur l'un n'empêche pas les autres.
+    """
+    verify_ville(ville)
+    if backup_ville:
+        verify_ville(backup_ville)
+
+    uploaded = []
+    errors = []
+    for file in files:
+        try:
+            result = await _process_single_upload(ville, backup_ville, file, project)
+            uploaded.append(result)
+        except HTTPException as e:
+            errors.append({"filename": file.filename, "detail": e.detail})
+
+    status_code = 200 if uploaded else 400
+    return JSONResponse(status_code=status_code, content={"uploaded": uploaded, "errors": errors})
 
 
 @app.get("/documents", tags=["Archives"])

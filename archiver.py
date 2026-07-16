@@ -150,4 +150,8 @@ def _content_type(filename: str) -> str:
         ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png", ".tiff": "image/tiff", ".tif": "image/tiff",
         ".webp": "image/webp",
+        ".zip": "application/zip",
+        ".mp4": "video/mp4", ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo", ".mkv": "video/x-matroska",
+        ".bak": "application/octet-stream",
     }.get(ext, "application/octet-stream")

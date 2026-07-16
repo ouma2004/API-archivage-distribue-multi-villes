@@ -16,7 +16,7 @@ logger = logging.getLogger("replicator")
 
 REPLICATE_ENDPOINT_TEMPLATE = "/api/replicate/{ville}"
 DELETE_ENDPOINT_TEMPLATE = "/api/replicate/{ville}/by-path"
-REQUEST_TIMEOUT_S = 90
+REQUEST_TIMEOUT_S = 600
 
 async def replicate_document_async(
     ville: str, id_doc: int, filename: str, archive_path: str,
