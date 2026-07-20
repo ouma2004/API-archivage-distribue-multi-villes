@@ -34,33 +34,41 @@ app = FastAPI(
         f"**Villes disponibles** : {', '.join(sorted(VILLES_VALIDES))}\n\n"
         "**Auth** : `Authorization: Bearer <token>`"
     ),
-    version="6.1.0",
+    version="6.1.1",
 )
+
 
 @app.on_event("startup")
 def startup():
     init_all_db()
     ensure_all_buckets()
-    print(f" [APP] Villes : {', '.join(sorted(VILLES_VALIDES))}")
+    print(f"  [APP] Villes : {', '.join(sorted(VILLES_VALIDES))}")
     asyncio.create_task(replication_background_loop(sorted(VILLES_VALIDES), interval_s=60))
+
 
 security = HTTPBearer()
 
+
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Retourne :
+    """
+    Retourne :
     - {"is_admin": True} si token admin
     - dict projet si token projet connu
     - None si ancien API_TOKEN global (mode legacy)
     - lève 401 sinon
     """
     token = credentials.credentials
+
     if ADMIN_TOKEN and token == ADMIN_TOKEN:
         return {"is_admin": True}
+
     project = get_project_for_token(token)
     if project:
         return project
+
     if token == API_TOKEN:
         return None
+
     raise HTTPException(status_code=401, detail="Token invalide")
 
 
@@ -105,15 +113,15 @@ def verify_ville(ville: str):
 class RenameRequest(BaseModel):
     filename: str
 
-# ── Endpoints ─────────────────────────────────────────────────────────────
 
+# ── Endpoints ─────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Système"])
 def health():
-    return {"status": "ok", "villes": sorted(VILLES_VALIDES), "version": "6.1.0"}
+    return {"status": "ok", "villes": sorted(VILLES_VALIDES), "version": "6.1.1"}
 
 
 @app.get("/whoami", tags=["Système"])
-def whoami(project = Depends(verify_token)):
+def whoami(project=Depends(verify_token)):
     if project and project.get("is_admin"):
         return {"mode": "admin", "project_name": "Administrateur (tous projets)"}
     if project is None:
@@ -122,8 +130,9 @@ def whoami(project = Depends(verify_token)):
 
 
 async def _process_single_upload(ville: str, backup_ville: str | None,
-                                   file: UploadFile, project) -> dict:
+                                  file: UploadFile, project) -> dict:
     content = await file.read()
+
     if len(content) == 0:
         raise HTTPException(status_code=400, detail=f"Fichier vide : {file.filename}")
     if len(content) > MAX_FILE_SIZE_MB * 1024 * 1024:
@@ -135,21 +144,30 @@ async def _process_single_upload(ville: str, backup_ville: str | None,
 
     try:
         tmp_path.write_bytes(content)
+
         minio_key = archive_file(ville, tmp_path, file.filename, project=project)
+
+        # Bucket effectif : None pour legacy ET pour admin (ni l'un ni
+        # l'autre n'a de bucket-projet personnel dédié).
+        effective_bucket = project["bucket"] if project and not project.get("is_admin") else None
+
         id_doc = save_document(
             ville=ville, filename=file.filename, archive_path=minio_key,
             file_type=ext.lstrip(".") or "bin", nb_pages=1, checksum=checksum,
-            project_bucket=(project["bucket"] if project and not project.get("is_admin") else None),
+            project_bucket=effective_bucket,
         )
+
         schedule_replication(
             ville=ville, id_doc=id_doc, filename=file.filename,
             archive_path=minio_key, file_type=ext.lstrip(".") or "bin",
             backup_ville_override=backup_ville,
+            project_bucket=effective_bucket,          # ← FIX : corrige le NoSuchKey
         )
+
         try:
             download_url = get_file_url(ville, minio_key, project=project)
         except Exception as e:
-            print(f" [WARN] URL présignée indisponible pour {minio_key} : {e}")
+            print(f"  [WARN] URL présignée indisponible pour {minio_key} : {e}")
             download_url = None
 
         return {
@@ -169,7 +187,7 @@ async def upload_document(
     ville: str = Query(..., description="Ville cible : " + ", ".join(sorted(VILLES_VALIDES))),
     backup_ville: str | None = Query(None, description="Ville de secours (optionnel)"),
     files: list[UploadFile] = File(..., description="Un ou plusieurs fichiers"),
-    project = Depends(verify_token),
+    project=Depends(verify_token),
 ):
     """
     Upload un ou plusieurs fichiers en un seul appel. Aucune restriction de
@@ -182,6 +200,7 @@ async def upload_document(
 
     uploaded = []
     errors = []
+
     for file in files:
         try:
             result = await _process_single_upload(ville, backup_ville, file, project)
@@ -199,7 +218,7 @@ def list_documents(
     file_type: str | None = Query(None),
     limit: int = 20,
     include_deleted: bool = Query(False),
-    project = Depends(verify_token),
+    project=Depends(verify_token),
 ):
     verify_ville(ville)
     docs = get_documents(
@@ -222,13 +241,16 @@ def list_documents(
 def get_document(
     doc_id: int,
     ville: str = Query(...),
-    project = Depends(verify_token),
+    project=Depends(verify_token),
 ):
     verify_ville(ville)
+
     doc_info = get_document_full(ville, doc_id)
     if not doc_info:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} non trouvé")
+
     _check_ownership(project, doc_info)
+
     if doc_info["archive_state"] == "DELETED":
         raise HTTPException(status_code=410, detail=f"Document {doc_id} a été supprimé")
 
@@ -243,13 +265,17 @@ def get_document(
             headers={"Content-Disposition": f'inline; filename="{filename}"'},
         )
     except Exception as e:
-        print(f" [GET:{ville}] Échec lecture primaire doc {doc_id} : {e}")
+        print(f"  [GET:{ville}] Échec lecture primaire doc {doc_id} : {e}")
 
     if doc_info["replication_status"] == "SYNCED" and doc_info["backup_ville"]:
         backup_ville = doc_info["backup_ville"]
         backup_path = doc_info["backup_archive_path"]
-        print(f" [GET:{ville}] Fallback vers backup '{backup_ville}' ({backup_path})")
+        print(f"  [GET:{ville}] Fallback vers backup '{backup_ville}' ({backup_path})")
         try:
+            # NOTE : le fallback utilise le bucket par défaut du site de
+            # secours (les copies de secours y atterrissent toujours dans
+            # documents/backup_from_<ville>/, jamais dans un bucket-projet
+            # équivalent — choix assumé, cf. discussion réplication).
             stream, content_type = get_file_stream(backup_ville, backup_path)
             return StreamingResponse(
                 stream, media_type=content_type,
@@ -266,17 +292,20 @@ def rename_document_endpoint(
     doc_id: int,
     body: RenameRequest,
     ville: str = Query(...),
-    project = Depends(verify_token),
+    project=Depends(verify_token),
 ):
     verify_ville(ville)
+
     doc_info = get_document_full(ville, doc_id)
     if not doc_info:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} introuvable ou supprimé")
+
     _check_ownership(project, doc_info)
 
     new_name = body.filename.strip()
     if not new_name:
         raise HTTPException(status_code=400, detail="Nom de fichier vide")
+
     renamed = rename_document(ville, doc_id, new_name)
     if not renamed:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} introuvable ou supprimé")
@@ -288,14 +317,15 @@ def delete_document_endpoint(
     doc_id: int,
     ville: str = Query(...),
     hard: bool = Query(False, description="True = suppression physique irréversible."),
-    project = Depends(verify_token),
+    project=Depends(verify_token),
 ):
     verify_ville(ville)
+
     doc_info = get_document_full(ville, doc_id)
     if not doc_info:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} introuvable")
-    _check_ownership(project, doc_info)
 
+    _check_ownership(project, doc_info)
     effective_project = _effective_project_for_file_access(project, doc_info)
 
     if hard:
@@ -304,7 +334,7 @@ def delete_document_endpoint(
             try:
                 delete_file(ville, archive_path, project=effective_project)
             except Exception as e:
-                print(f" [WARN] Échec suppression MinIO {archive_path} : {e}")
+                print(f"  [WARN] Échec suppression MinIO {archive_path} : {e}")
     else:
         deleted = soft_delete_document(ville, doc_id)
         if not deleted:
@@ -322,7 +352,7 @@ def delete_document_endpoint(
 def get_file_by_path(
     ville: str = Query(...),
     archive_path: str = Query(...),
-    project = Depends(verify_token),
+    project=Depends(verify_token),
 ):
     verify_ville(ville)
     try:
@@ -360,14 +390,17 @@ async def receive_replication_for_ville(
         backup_key = archive_file(
             ville, tmp_path, file.filename, folder_prefix=f"backup_from_{source_ville}",
         )
+
         id_doc_backup = save_document(
             ville=ville, filename=file.filename, archive_path=backup_key,
             file_type=file_type, nb_pages=nb_pages,
             source_site_id=source_site_id, is_primary=False,
         )
-        print(f" [REPLICATE] Reçu depuis {source_ville} (doc {source_id_doc}, "
+
+        print(f"  [REPLICATE] Reçu depuis {source_ville} (doc {source_id_doc}, "
               f"{nb_pages} page(s)) → stocké dans {ville} sous {backup_key} "
               f"(source_site_id={source_site_id})")
+
         return JSONResponse(content={
             "status": "received", "ville": ville,
             "id_doc": id_doc_backup, "archive_path": backup_key,
@@ -384,6 +417,7 @@ def delete_replica_by_path(
     hard: bool = Query(False),
 ):
     verify_ville(ville)
+
     doc = get_document_by_archive_path(ville, archive_path)
     if not doc:
         return {"status": "already_absent", "ville": ville, "archive_path": archive_path}
@@ -392,7 +426,7 @@ def delete_replica_by_path(
         try:
             delete_file(ville, archive_path)
         except Exception as e:
-            print(f" [WARN] Échec suppression MinIO backup {archive_path} : {e}")
+            print(f"  [WARN] Échec suppression MinIO backup {archive_path} : {e}")
         delete_document(ville, doc["id_doc"])
     else:
         soft_delete_document(ville, doc["id_doc"])

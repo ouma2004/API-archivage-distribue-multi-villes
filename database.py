@@ -72,6 +72,7 @@ def init_all_db():
     if not VILLES:
         print("  [DB] ⚠️  Aucune ville active (VILLES_ACTIVES vide) — rien à initialiser")
         return
+
     for ville in VILLES:
         init_db_for_ville(ville)
         sync_sites_table(ville)
@@ -108,6 +109,7 @@ def save_document(
 
     validate_ville(ville)
     current_site_id = SITES_REGISTRY[ville]["site_id"]
+
     effective_source_site_id = source_site_id if source_site_id is not None else current_site_id
 
     if is_primary:
@@ -116,6 +118,7 @@ def save_document(
     else:
         policy = "LOCAL_ONLY"
         status = "SYNCED"
+
     if replication_status_override:
         status = replication_status_override
 
@@ -151,14 +154,14 @@ def save_document(
 
 
 def get_documents(ville: str, limit: int = 20, file_type: str | None = None,
-                   include_deleted: bool = False,
-                   project_bucket_filter: str | None = "__NONE__") -> list[dict]:
+                  include_deleted: bool = False,
+                  project_bucket_filter: str | None = "__NONE__") -> list[dict]:
     """
     project_bucket_filter :
       "__NONE__" (défaut) → ne filtre pas (usage interne)
       "ALL"               → admin, aucun filtre
-      None                 → seulement les documents legacy (sans projet)
-      "documents-projetX"  → seulement ce bucket-projet précis
+      None                → seulement les documents legacy (sans projet)
+      "documents-projetX" → seulement ce bucket-projet précis
     """
     validate_ville(ville)
     conn = get_conn(ville)
@@ -285,7 +288,8 @@ def get_pending_replications(ville: str) -> list[dict]:
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id_doc, filename, archive_path, file_type, replication_policy, nb_pages
+            SELECT id_doc, filename, archive_path, file_type, replication_policy,
+                   nb_pages, project_bucket
             FROM documents
             WHERE replication_status IN ('PENDING', 'FAILED')
               AND replication_policy != 'LOCAL_ONLY'
@@ -300,6 +304,7 @@ def get_pending_replications(ville: str) -> list[dict]:
         {
             "id_doc": r[0], "filename": r[1], "archive_path": r[2],
             "file_type": r[3], "replication_policy": r[4], "nb_pages": r[5],
+            "project_bucket": r[6],
         }
         for r in rows
     ]
