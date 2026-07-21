@@ -142,14 +142,24 @@ async def _process_single_upload(ville: str, backup_ville: str | None,
     ext = Path(file.filename).suffix.lower() if file.filename else ""
     tmp_path = TEMP_DIR / f"{uuid.uuid4().hex}{ext}"
 
+    # CORRECTIF : un admin ({"is_admin": True}) n'a ni bucket ni identifiants
+    # propres — contrairement à un vrai projet. Sans cette traduction,
+    # archiver.py plante avec KeyError('bucket') dès qu'un admin uploade,
+    # puisque _resolve_bucket()/_get_client() supposent qu'un `project`
+    # "truthy" contient toujours ces clés. On traduit donc l'admin en None
+    # (= comportement legacy, bucket "documents" par défaut, identifiants
+    # root MinIO), exactement comme le fait déjà _effective_project_for_file_access
+    # pour la lecture/suppression.
+    archiver_project = project if (project and not project.get("is_admin")) else None
+
     try:
         tmp_path.write_bytes(content)
 
-        minio_key = archive_file(ville, tmp_path, file.filename, project=project)
+        minio_key = archive_file(ville, tmp_path, file.filename, project=archiver_project)
 
         # Bucket effectif : None pour legacy ET pour admin (ni l'un ni
         # l'autre n'a de bucket-projet personnel dédié).
-        effective_bucket = project["bucket"] if project and not project.get("is_admin") else None
+        effective_bucket = archiver_project["bucket"] if archiver_project else None
 
         id_doc = save_document(
             ville=ville, filename=file.filename, archive_path=minio_key,
@@ -161,11 +171,11 @@ async def _process_single_upload(ville: str, backup_ville: str | None,
             ville=ville, id_doc=id_doc, filename=file.filename,
             archive_path=minio_key, file_type=ext.lstrip(".") or "bin",
             backup_ville_override=backup_ville,
-            project_bucket=effective_bucket,          # ← FIX : corrige le NoSuchKey
+            project_bucket=effective_bucket,
         )
 
         try:
-            download_url = get_file_url(ville, minio_key, project=project)
+            download_url = get_file_url(ville, minio_key, project=archiver_project)
         except Exception as e:
             print(f"  [WARN] URL présignée indisponible pour {minio_key} : {e}")
             download_url = None

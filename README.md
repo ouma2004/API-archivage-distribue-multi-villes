@@ -362,95 +362,131 @@ Réponses possibles :
 
 ---
 
-## Créer un nouveau projet
+## Créer un nouveau projet (bucket + compte MinIO isolé)
 
-### 1. Créer le bucket et le compte MinIO
+Un "projet" est un client/service isolé : son propre bucket MinIO, son propre
+compte d'accès, et son propre token API — aucun projet ne peut voir ou
+modifier les fichiers d'un autre. Cette section explique comment en créer
+un, de zéro, sur une machine qui n'a encore rien installé.
 
-```powershell
-mc.exe mb minio-casa/documents-<projet>
-mc.exe admin user add minio-casa admin<projet> <secret>
+### Prérequis
 
-$policyJson = @"
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": ["s3:*"],
-    "Resource": ["arn:aws:s3:::documents-<projet>", "arn:aws:s3:::documents-<projet>/*"]
-  }]
-}
-"@
-[System.IO.File]::WriteAllText("$env:TEMP\<projet>-policy.json", $policyJson)
+| Outil | Pourquoi | Déjà présent si... |
+|---|---|---|
+| **Un terminal bash** | Le script d'automatisation est écrit en bash | Linux natif (VM Azure) : toujours présent |
+| **MinIO Client (`mc`)** | Pour créer buckets/comptes/policies | À installer (voir plus bas) |
+| **Python 3** (optionnel) | Pour la mise à jour automatique de `values.yaml` | Sans lui, le script affiche le résultat à copier à la main — fonctionne quand même |
 
-mc.exe admin policy create minio-casa <projet>-policy "$env:TEMP\<projet>-policy.json"
-mc.exe admin policy attach minio-casa <projet>-policy --user admin<projet>
+### Installation des prérequis — Windows
+
+**1. Un terminal bash : Git Bash**
+
+Le script est écrit en bash, pas en PowerShell — **`chmod` et les autres
+commandes Unix n'existent pas dans PowerShell.**
+
 ```
-
-> ⚠️ Toujours utiliser `[System.IO.File]::WriteAllText(...)`, jamais
-> `Out-File -Encoding utf8`, qui ajoute un BOM invisible que le parseur JSON
-> de MinIO refuse (`invalid character 'ï'`).
-
-### 2. Fonction PowerShell d'automatisation
-
-```powershell
-function New-ArchiverProject {
-    param(
-        [string]$ProjectName,
-        [string]$AliasName = "minio-casa",
-        [string]$AccessKey,
-        [string]$SecretKey
-    )
-    $bucket = "documents-$ProjectName"
-    mc.exe mb "$AliasName/$bucket"
-    mc.exe admin user add $AliasName $AccessKey $SecretKey
-
-    $policyJson = @"
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": ["s3:*"],
-    "Resource": ["arn:aws:s3:::$bucket", "arn:aws:s3:::$bucket/*"]
-  }]
-}
-"@
-    $policyPath = "$env:TEMP\$ProjectName-policy.json"
-    [System.IO.File]::WriteAllText($policyPath, $policyJson)
-    mc.exe admin policy create $AliasName "$ProjectName-policy" $policyPath
-    mc.exe admin policy attach $AliasName "$ProjectName-policy" --user $AccessKey
-
-    $token = "tok_$($ProjectName)_$([guid]::NewGuid().ToString('N').Substring(0,8))"
-    $fragment = "`"$token`":{`"name`":`"$ProjectName`",`"bucket`":`"$bucket`",`"access_key`":`"$AccessKey`",`"secret_key`":`"$SecretKey`"}"
-
-    Write-Host "`nProjet '$ProjectName' créé."
-    Write-Host "Fragment à ajouter dans projectsJson :"
-    Write-Host $fragment
-    $fragment | Set-Clipboard
-    Write-Host "`n(Copié dans le presse-papiers — Ctrl+V pour coller.)"
-
-    return $fragment
-}
+https://git-scm.com/download/win
 ```
+Installation par défaut (aucune option spéciale à cocher). Une fois installé,
+ouvre-le : clic droit dans le dossier du projet → **"Git Bash Here"**, ou
+cherche "Git Bash" dans le menu Démarrer.
 
-Usage :
-```powershell
-New-ArchiverProject -ProjectName "projetc" -AccessKey "adminprojetc" -SecretKey "SecretProjetC789"
+Vérifie que tu es bien dedans : le prompt doit ressembler à
+`pc@PC MINGW64 ~/chemin (main) $`, **pas** à `PS C:\...>` (ça, c'est encore
+PowerShell).
+
+**2. MinIO Client (`mc`)**
+
 ```
+https://min.io/docs/minio/windows/index.html#minio-client
+```
+Télécharge `mc.exe`, place-le dans un dossier de ton `PATH` (ou utilise le
+chemin complet à chaque commande).
 
-### 3. Ajouter le fragment dans `values.yaml` et redéployer
+**3. Python 3 (optionnel, pour l'automatisation complète)**
+
+```
+https://www.python.org/downloads/release/python-3138/
+```
+Prends **"Windows installer (64-bit)"**. Pendant l'installation, **coche
+"Add python.exe to PATH"** 
+
+### Installation des prérequis — Linux (VM Azure)
 
 ```bash
-helm upgrade archiver ./doc-archiver-chart \
-  --set villes.casa.enabled=true \
-  --set villes.rabat.enabled=true
+sudo apt update
+sudo apt install -y python3
+
+curl https://dl.min.io/client/mc/release/linux-amd64/mc \
+  --create-dirs -o ~/minio-binaries/mc
+chmod +x ~/minio-binaries/mc
+export PATH=$PATH:~/minio-binaries/
 ```
 
-> La création de projet reste **volontairement manuelle** (pas de bouton
-> "créer un projet" côté Odoo) — un geste conscient avant modification de la
-> configuration vivante, plutôt qu'une automatisation qui pourrait créer des
-> ressources sans supervision.
+### Utilisation du script
 
----
+**1. Rendre le script exécutable (une seule fois)**
+```bash
+chmod +x scripts/create-project.sh
+```
+
+**2. Créer l'alias `mc` vers le MinIO de la ville visée (une seule fois par ville)**
+```bash
+mc alias set minio-casa http://localhost:30902 minioadmin minioadmin
+mc alias set minio-rabat http://localhost:30904 minioadmin minioadmin
+mc alias set minio-fes http://localhost:30900 minioadmin minioadmin
+```
+*(Remplace `minioadmin`/`minioadmin` par les vrais identifiants root si
+différents chez toi — voir `values.yaml`, `minio.rootUser`/`rootPassword`.)*
+
+**3. Lancer le script**
+
+Sans mise à jour automatique de `values.yaml` (affiche juste le résultat à copier) :
+```bash
+./scripts/create-project.sh minio-casa nomduprojet identifiant "MotDePasseFort"
+```
+
+Avec mise à jour automatique (nécessite Python) :
+```bash
+./scripts/create-project.sh minio-casa nomduprojet identifiant "MotDePasseFort" doc-archiver-chart/values.yaml
+```
+
+⚠️ **Répète cette commande pour CHAQUE ville où ce projet doit exister**
+(casa, rabat, fes...) — chaque cluster MinIO est physiquement indépendant.
+Utilise le **même** `identifiant`/mot de passe partout, pour garder un seul
+token cohérent.
+
+**4. Récupérer le token généré**
+
+Le script affiche un fragment du type :
+```json
+"tok_nomduprojet_a1b2c3d4":{"name":"nomduprojet","bucket":"documents-nomduprojet","access_key":"identifiant","secret_key":"MotDePasseFort"}
+```
+Si tu n'as pas donné de chemin `values.yaml`, ajoute ce fragment toi-même
+dans `projectsJson`. Si tu l'as donné, c'est déjà fait (une sauvegarde
+`values.yaml.bak` est créée automatiquement avant toute modification).
+
+**5. Redéployer pour que l'API connaisse ce nouveau token**
+```bash
+helm upgrade archiver . --set villes.casa.enabled=true --set villes.rabat.enabled=true
+kubectl get pods -n doc-archiver -w
+```
+
+**6. Vérifier**
+```bash
+curl http://localhost:30800/whoami -H "Authorization: Bearer tok_nomduprojet_a1b2c3d4"
+# → {"mode": "project", "project_name": "nomduprojet"}
+```
+
+### Dépannage
+
+| Symptôme | Cause probable | Solution |
+|---|---|---|
+| `chmod: command not found` | Tu es dans PowerShell, pas Git Bash | Ouvre un vrai terminal Git Bash (voir Prérequis) |
+| `python3: command not found` | Python absent, ou installé sous un autre nom | Le script bascule automatiquement sur `python`/`py`, ou affiche le résultat à copier à la main si aucun n'existe |
+| `Unable to make bucket ... invalid characters` | Nom de projet avec majuscules/caractères spéciaux | Le script convertit déjà en minuscules et rejette les caractères invalides — vérifie que tu utilises la dernière version |
+| `Unable to initialize admin connection ... alias` | L'alias `mc` n'existe pas encore pour cette ville | `mc alias set <alias> <url> <user> <password>` avant de relancer |
+| Setup Python échoue (`0x80070666`) | Conflit avec une install Python précédente | Utiliser la version portable (voir Prérequis) |
 
 ## Tests de bout en bout
 
@@ -526,9 +562,7 @@ métier.
 | API Token | Token du projet (ou token legacy en transition) |
 | Project Name | Lecture seule, résolu automatiquement via `/whoami` |
 
-> Le champ **Backup City** a été retiré : la réplication inter-sites est
-> désormais entièrement pilotée côté serveur (`{VILLE}_BACKUP_OF` dans le
-> Helm chart), pas au niveau d'un enregistrement Odoo individuel.
+
 
 ### Bouton "Tester la connexion"
 

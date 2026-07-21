@@ -12,6 +12,7 @@ env/
 # Python version
 .python-version
 
+*.bak
 # uv
 .uv/
 uv.lock
