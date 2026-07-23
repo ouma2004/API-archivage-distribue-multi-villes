@@ -6,6 +6,21 @@ from pathlib import Path
 
 API_TOKEN = os.getenv("API_TOKEN", "dev-secret-token")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip() or None
+
+# ═══════════════════════════════════════════════════════════════════════════
+# JETON INTER-SITES — distinct des tokens clients/projets et du token admin.
+# Utilisé UNIQUEMENT pour authentifier les appels API↔API de réplication
+# (POST /api/replicate/{ville}, DELETE /api/replicate/{ville}/by-path).
+# Un token client compromis ne doit jamais donner accès à ces endpoints
+# internes, et inversement.
+#
+# Par défaut, retombe sur API_TOKEN pour rester rétrocompatible avec un
+# déploiement existant qui n'aurait pas encore défini INTER_SITE_TOKEN —
+# mais pour une vraie isolation de sécurité, définis un secret DIFFÉRENT
+# de tous les autres tokens dans values.yaml.
+# ═══════════════════════════════════════════════════════════════════════════
+INTER_SITE_TOKEN = os.getenv("INTER_SITE_TOKEN", "").strip() or API_TOKEN
+
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
 TEMP_DIR = Path(os.getenv("TEMP_DIR", "/tmp/api_archiver"))
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -22,6 +37,7 @@ VILLES_ACTIVES = [
     v.strip() for v in os.getenv("VILLES_ACTIVES", "").split(",")
     if v.strip()
 ]
+
 
 def _build_villes_config() -> dict:
     villes = {}
@@ -44,14 +60,17 @@ def _build_villes_config() -> dict:
         }
     return villes
 
+
 VILLES = _build_villes_config()
 VILLES_VALIDES = set(VILLES.keys())
+
 
 def validate_ville(ville: str) -> None:
     if ville not in VILLES_VALIDES:
         raise ValueError(
             f"Ville inconnue : '{ville}'. Villes valides : {', '.join(sorted(VILLES_VALIDES))}"
         )
+
 
 def validate_ville_or_remote(ville: str) -> None:
     if ville in VILLES_VALIDES:
@@ -64,6 +83,7 @@ def validate_ville_or_remote(ville: str) -> None:
         f"Villes distantes : {', '.join(sorted(REMOTE_API_URLS.keys()))}"
     )
 
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PROJETS (multi-tenant) — un token = un projet = un bucket + compte MinIO
 # PROJECTS_JSON = {"token_x":{"name":"ProjetA","bucket":"documents-projeta","access_key":"...","secret_key":"..."}}
@@ -74,10 +94,12 @@ if _projects_raw:
     try:
         PROJECTS = json.loads(_projects_raw)
     except Exception as e:
-        print(f" [CONFIG] Erreur parsing PROJECTS_JSON : {e}")
+        print(f"  [CONFIG] Erreur parsing PROJECTS_JSON : {e}")
+
 
 def get_project_for_token(token: str) -> dict | None:
     return PROJECTS.get(token)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # RÉPLICATION INTER-SITES
@@ -97,6 +119,7 @@ REPLICATION_POLICY_FULL = "FULL"
 _API_SELF_HOST = os.getenv("API_SELF_HOST", "api")
 _API_SELF_PORT = int(os.getenv("API_SELF_PORT", "8000"))
 
+
 def _build_sites_registry() -> dict:
     registry = {}
     for ville in VILLES_ACTIVES:
@@ -104,31 +127,38 @@ def _build_sites_registry() -> dict:
         site_type = os.getenv(f"{prefix}_SITE_TYPE", SITE_TYPE_CLUSTER)
         backup_of = os.getenv(f"{prefix}_BACKUP_OF", "").strip() or None
         site_id = int(os.getenv(f"{prefix}_SITE_ID", str(VILLES_ACTIVES.index(ville) + 1)))
+
         registry[ville] = {
             "site_id": site_id, "site_name": ville.capitalize(), "site_type": site_type,
             "vpn_ip": _API_SELF_HOST, "api_port": _API_SELF_PORT, "backup_of": backup_of,
         }
     return registry
 
+
 SITES_REGISTRY = _build_sites_registry()
+
 
 def is_single_server(ville: str) -> bool:
     validate_ville(ville)
     return SITES_REGISTRY[ville]["site_type"] == SITE_TYPE_SINGLE
 
+
 def get_backup_ville(ville: str) -> str | None:
     validate_ville(ville)
     return SITES_REGISTRY[ville].get("backup_of")
+
 
 def get_site_vpn_url(ville: str) -> str:
     validate_ville(ville)
     site = SITES_REGISTRY[ville]
     return f"http://{site['vpn_ip']}:{site['api_port']}"
 
+
 def get_replication_policy(ville: str) -> str:
     if is_single_server(ville) and get_backup_ville(ville):
         return REPLICATION_POLICY_BACKUP
     return REPLICATION_POLICY_LOCAL_ONLY
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # URLs des APIs distantes — pour réplication cross-site (multi-machines)
@@ -139,8 +169,10 @@ for _ville in ["fes", "casa", "rabat"]:
     if _url:
         REMOTE_API_URLS[_ville] = _url
 
+
 def get_remote_api_url(ville: str) -> str | None:
     return REMOTE_API_URLS.get(ville)
+
 
 def get_site_vpn_url_safe(ville: str) -> str:
     remote = get_remote_api_url(ville)

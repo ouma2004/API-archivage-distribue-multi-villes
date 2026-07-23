@@ -8,7 +8,7 @@ import httpx
 
 from config import (
     is_single_server, get_backup_ville, get_site_vpn_url_safe,
-    MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
+    MINIO_ACCESS_KEY, MINIO_SECRET_KEY, INTER_SITE_TOKEN,
     REPLICATION_STATUS_SYNCING, REPLICATION_STATUS_SYNCED, REPLICATION_STATUS_FAILED,
 )
 from database import update_replication_status, get_pending_replications
@@ -67,6 +67,7 @@ async def replicate_document_async(
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S) as client:
             response = await client.post(
                 target_url,
+                headers={"Authorization": f"Bearer {INTER_SITE_TOKEN}"},
                 files={"file": (filename, file_bytes, content_type)},
                 data={
                     "source_ville": ville, "source_id_doc": str(id_doc),
@@ -117,6 +118,7 @@ async def delete_backup_async(backup_ville: str, backup_archive_path: str, hard:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S) as client:
             response = await client.delete(
                 target_url,
+                headers={"Authorization": f"Bearer {INTER_SITE_TOKEN}"},
                 params={"archive_path": backup_archive_path, "hard": hard},
             )
             response.raise_for_status()

@@ -14,7 +14,7 @@ from archiver import (
     archive_file, ensure_all_buckets, get_file_url, get_file_stream, delete_file,
 )
 from config import (
-    API_TOKEN, ADMIN_TOKEN, MAX_FILE_SIZE_MB, TEMP_DIR, VILLES_VALIDES,
+    API_TOKEN, ADMIN_TOKEN, INTER_SITE_TOKEN, MAX_FILE_SIZE_MB, TEMP_DIR, VILLES_VALIDES,
     validate_ville, get_project_for_token, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
 )
 from database import (
@@ -108,6 +108,18 @@ def verify_ville(ville: str):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return ville
+
+
+def verify_inter_site_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Authentification dédiée aux appels INTER-SITES (réplication), distincte
+    des tokens clients/projets et du token admin. Protège les endpoints
+    internes /api/replicate/* utilisés UNIQUEMENT par les autres instances
+    de cette API — jamais par un client, jamais par Odoo.
+    """
+    if credentials.credentials != INTER_SITE_TOKEN:
+        raise HTTPException(status_code=401, detail="Jeton inter-sites invalide")
+    return True
 
 
 class RenameRequest(BaseModel):
@@ -323,7 +335,7 @@ def rename_document_endpoint(
 
 
 @app.delete("/documents/{doc_id}", tags=["Archives"])
-def delete_document_endpoint(
+async def delete_document_endpoint(
     doc_id: int,
     ville: str = Query(...),
     hard: bool = Query(False, description="True = suppression physique irréversible."),
@@ -376,7 +388,8 @@ def get_file_by_path(
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@app.post("/api/replicate/{ville}", tags=["Réplication"])
+@app.post("/api/replicate/{ville}", tags=["Réplication"],
+          dependencies=[Depends(verify_inter_site_token)])
 async def receive_replication_for_ville(
     ville: str,
     file: UploadFile = File(...),
@@ -420,7 +433,8 @@ async def receive_replication_for_ville(
             tmp_path.unlink()
 
 
-@app.delete("/api/replicate/{ville}/by-path", tags=["Réplication"])
+@app.delete("/api/replicate/{ville}/by-path", tags=["Réplication"],
+            dependencies=[Depends(verify_inter_site_token)])
 def delete_replica_by_path(
     ville: str,
     archive_path: str = Query(...),

@@ -22,6 +22,7 @@ api:
   # À réserver à un nombre restreint de personnes (jamais dans un champ Odoo
   # visible par plusieurs utilisateurs).
   adminToken: "CHANGEZ-MOI-admin-secret"
+  interSiteToken: "secret-intersite"   # Pour Sécuriser les endpoints inter-sites
 
   # Table des projets — un token = un projet = un bucket + un compte MinIO
   # dédié. Format JSON, une entrée par projet.

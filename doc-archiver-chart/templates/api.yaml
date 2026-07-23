@@ -24,6 +24,8 @@ spec:
               value: {{ .Values.api.apiToken | quote }}
             - name: ADMIN_TOKEN
               value: {{ .Values.api.adminToken | default "" | quote }}
+            - name: INTER_SITE_TOKEN
+              value: {{ .Values.api.interSiteToken | quote }}
             - name: PROJECTS_JSON
               value: {{ .Values.api.projectsJson | default "" | quote }}
 
