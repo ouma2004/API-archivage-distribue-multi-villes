@@ -5,8 +5,7 @@ stockage MinIO par ville, métadonnées PostgreSQL par ville, réplication
 inter-sites automatique, et isolation multi-tenant par projet (bucket + compte
 MinIO dédié par client).
 
-**Rôle strict** : stocker des documents et les répliquer entre sites. Aucune
-extraction, OCR, embedding ou déduplication — archivage pur.
+**Rôle strict** : stocker des documents et les répliquer entre sites.
 
 ---
 
@@ -55,7 +54,7 @@ Chaque ville est un **site physique indépendant** :
 - La communication inter-sites passe **uniquement en HTTP au-dessus du VPN
   WireGuard** — jamais de connexion PostgreSQL directe entre sites.
 
-### Couche d'isolation par projet (nouveau)
+### Couche d'isolation par projet 
 
 Au-dessus de cette architecture par ville, chaque ville peut héberger
 plusieurs **projets** (clients), chacun avec :
@@ -69,7 +68,7 @@ métier normal.
 
 ```
 Ville Casa
-├── bucket "documents"            ← mode legacy (token global dev-secret-token)
+├── bucket "documents"            ← mode legacy (token global )
 ├── bucket "documents-projeta"    ← token projet A uniquement
 ├── bucket "documents-projetb"    ← token projet B uniquement
 └── (token admin voit les trois)
@@ -342,7 +341,7 @@ api:
   projectsJson: '{"tok_projetA_xxx":{"name":"ProjetA","bucket":"documents-projeta","access_key":"adminprojeta","secret_key":"SecretProjetA"}}'
 ```
 
-Voir [`values.yaml.example`](./values.yaml.example) pour un exemple complet
+Voir [`values.yaml.example`](./doc-archiver-chart/values.yaml.example) pour un exemple complet
 avec deux projets.
 
 ### Endpoint `/whoami`
@@ -362,7 +361,7 @@ Réponses possibles :
 
 ---
 
-## Créer un nouveau projet (bucket + compte MinIO isolé)
+## Créer un nouveau projet 
 
 Un "projet" est un client/service isolé : son propre bucket MinIO, son propre
 compte d'accès, et son propre token API — aucun projet ne peut voir ou
