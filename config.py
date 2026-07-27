@@ -21,7 +21,6 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip() or None
 # ═══════════════════════════════════════════════════════════════════════════
 INTER_SITE_TOKEN = os.getenv("INTER_SITE_TOKEN", "").strip() or API_TOKEN
 
-MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
 TEMP_DIR = Path(os.getenv("TEMP_DIR", "/tmp/api_archiver"))
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,6 +46,10 @@ def _build_villes_config() -> dict:
         minio_endpoint = os.getenv(f"{prefix}_MINIO_ENDPOINT", f"minio-{ville}-1:9000")
         minio_public = os.getenv(f"{prefix}_MINIO_PUBLIC", "").strip() or minio_endpoint
 
+        # ← nouveau : identifiants MinIO spécifiques à la ville, repli sur le défaut global
+        minio_access_key = os.getenv(f"{prefix}_MINIO_ACCESS_KEY", "").strip() or MINIO_ACCESS_KEY
+        minio_secret_key = os.getenv(f"{prefix}_MINIO_SECRET_KEY", "").strip() or MINIO_SECRET_KEY
+
         villes[ville] = {
             "postgres": {
                 "host": postgres_host, "port": 5432, "database": POSTGRES_DATABASE,
@@ -54,7 +57,7 @@ def _build_villes_config() -> dict:
             },
             "minio": {
                 "endpoint": minio_endpoint, "public_endpoint": minio_public,
-                "access_key": MINIO_ACCESS_KEY, "secret_key": MINIO_SECRET_KEY,
+                "access_key": minio_access_key, "secret_key": minio_secret_key,
                 "bucket": MINIO_BUCKET, "secure": False,
             },
         }

@@ -29,9 +29,6 @@ spec:
             - name: PROJECTS_JSON
               value: {{ .Values.api.projectsJson | default "" | quote }}
 
-            - name: MAX_FILE_SIZE_MB
-              value: {{ .Values.api.maxFileSizeMb | quote }}
-
             - name: VILLES_ACTIVES
               value: "{{ range $villeName, $ville := .Values.villes }}{{ if $ville.enabled }}{{ $villeName }},{{ end }}{{ end }}"
 
@@ -55,6 +52,11 @@ spec:
             - name: {{ printf "%s_MINIO_PUBLIC" ($villeName | upper) }}
               value: {{ $ville.minioPublic | quote }}
 
+            - name: {{ printf "%s_MINIO_ACCESS_KEY" ($villeName | upper) }}
+              value: {{ default $.Values.minio.rootUser $ville.minioRootUser | quote }}
+
+            - name: {{ printf "%s_MINIO_SECRET_KEY" ($villeName | upper) }}
+              value: {{ default $.Values.minio.rootPassword $ville.minioRootPassword | quote }}
 
             - name: {{ printf "%s_SITE_TYPE" ($villeName | upper) }}
               value: {{ $ville.siteType | quote }}

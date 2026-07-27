@@ -88,6 +88,8 @@ minio:
 villes:
   fes:
     enabled: false
+    minioRootUser: minioadmin-fes
+    minioRootPassword: "MotDePasseFesSecure123"
     remoteApiUrl: "http://10.10.0.1:30800"   # IP VPN Azure
     namespace: ville-fes
     siteId: 1
@@ -100,6 +102,8 @@ villes:
 
   casa:
     enabled: false
+    minioRootUser: minioadmin-casa
+    minioRootPassword: "MotDePasseCasaSecure123"
     remoteApiUrl: "http://10.10.0.2:30800"   # IP VPN PC local
     namespace: ville-casa
     siteId: 2
@@ -113,6 +117,8 @@ villes:
 
   rabat:
     enabled: false
+    minioRootUser: minioadmin-rabat
+    minioRootPassword: "MotDePasseRabatSecure123"
     remoteApiUrl: "http://10.10.0.2:30800"   # IP VPN PC local
     namespace: ville-rabat
     siteId: 3

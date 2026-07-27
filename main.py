@@ -14,7 +14,7 @@ from archiver import (
     archive_file, ensure_all_buckets, get_file_url, get_file_stream, delete_file,
 )
 from config import (
-    API_TOKEN, ADMIN_TOKEN, INTER_SITE_TOKEN, MAX_FILE_SIZE_MB, TEMP_DIR, VILLES_VALIDES,
+    API_TOKEN, ADMIN_TOKEN, INTER_SITE_TOKEN, TEMP_DIR, VILLES_VALIDES,
     validate_ville, get_project_for_token, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
 )
 from database import (
@@ -147,9 +147,7 @@ async def _process_single_upload(ville: str, backup_ville: str | None,
 
     if len(content) == 0:
         raise HTTPException(status_code=400, detail=f"Fichier vide : {file.filename}")
-    if len(content) > MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"{file.filename} dépasse {MAX_FILE_SIZE_MB} Mo")
-
+    
     checksum = hashlib.sha256(content).hexdigest()
     ext = Path(file.filename).suffix.lower() if file.filename else ""
     tmp_path = TEMP_DIR / f"{uuid.uuid4().hex}{ext}"
