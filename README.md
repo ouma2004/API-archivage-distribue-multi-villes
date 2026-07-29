@@ -476,6 +476,195 @@ kubectl get pods -n doc-archiver -w
 curl http://localhost:30800/whoami -H "Authorization: Bearer tok_nomduprojet_a1b2c3d4"
 # → {"mode": "project", "project_name": "nomduprojet"}
 ```
+### Supprimer un projet
+
+La suppression d'un projet est une opération **irréversible**. Elle supprime les ressources MinIO associées au projet ainsi que sa configuration dans `values.yaml`.
+
+Le script `delete-project.sh` effectue plusieurs vérifications avant toute suppression afin d'éviter de supprimer accidentellement un autre projet.
+
+#### Éléments supprimés
+
+Pour un projet donné, le script supprime :
+
+* le contenu du bucket MinIO ;
+* le bucket `documents-<projet>` ;
+* le compte utilisateur MinIO associé au projet ;
+* la policy MinIO dédiée au projet ;
+* l'entrée correspondante dans `projectsJson` de `values.yaml`.
+
+Une sauvegarde de `values.yaml` est créée automatiquement sous :
+
+```text
+values.yaml.bak
+```
+
+#### 1. Rendre le script exécutable
+
+Cette opération est nécessaire une seule fois :
+
+```bash
+chmod +x scripts/delete-project.sh
+```
+
+#### 2. Vérifier l'alias MinIO
+
+L'alias `mc` correspondant à la ville doit être configuré et accessible.
+
+Par exemple pour Casa :
+
+```bash
+mc alias set minio-casa http://localhost:30902 <root_user> <root_password>
+```
+
+Vérifier ensuite la connexion :
+
+```bash
+mc ls minio-casa
+```
+
+#### 3. Lancer le script
+
+Syntaxe :
+
+```bash
+./scripts/delete-project.sh <alias_mc> <nom_projet> [chemin_values.yaml]
+```
+
+Exemple :
+
+```bash
+./scripts/delete-project.sh minio-casa projettest doc-archiver-chart/values.yaml
+```
+
+#### 4. Vérifications automatiques
+
+Avant la suppression, le script recherche le projet dans `values.yaml` et récupère automatiquement :
+
+* le token du projet ;
+* le nom du projet ;
+* le bucket ;
+* l'`access_key` MinIO.
+
+Il vérifie ensuite l'existence du :
+
+* bucket ;
+* compte utilisateur MinIO ;
+* policy MinIO.
+
+Exemple :
+
+```text
+=== Recherche du projet dans values.yaml ===
+✓ Projet trouvé dans values.yaml.
+  Token      : tok_projettest_xxxxxxxx
+  Nom        : projettest
+  Bucket     : documents-projettest
+  Access Key : admintestcasa
+
+=== Vérification du projet 'projettest' ===
+✓ Bucket trouvé : documents-projettest
+✓ Utilisateur MinIO trouvé : admintestcasa
+✓ Policy trouvée : projettest-policy
+```
+
+#### 5. Authentification du projet
+
+Une authentification supplémentaire est demandée avant toute suppression.
+
+Le script demande le **secret du projet** correspondant à l'utilisateur MinIO enregistré dans `values.yaml`.
+
+Si le secret est incorrect, la suppression est immédiatement annulée.
+
+Cette étape permet d'éviter qu'une personne disposant uniquement d'un accès administrateur à la machine puisse supprimer accidentellement un projet sans connaître son secret.
+
+#### 6. Confirmation finale
+
+Après vérification du secret, une deuxième confirmation est obligatoire.
+
+Le script demande exactement :
+
+```text
+Pour continuer, tape exactement DELETE-projettest :
+```
+
+Il faut saisir :
+
+```text
+DELETE-projettest
+```
+
+Toute autre valeur entraîne l'annulation de l'opération :
+
+```text
+❌ Confirmation incorrecte.
+Suppression annulée.
+```
+
+#### 7. Suppression des ressources MinIO
+
+Après validation des deux protections, le script procède dans l'ordre suivant :
+
+```text
+Secret du projet
+       ↓
+Confirmation DELETE-<projet>
+       ↓
+Suppression des documents
+       ↓
+Suppression du bucket
+       ↓
+Détachement de la policy
+       ↓
+Suppression de l'utilisateur MinIO
+       ↓
+Suppression de la policy
+       ↓
+Suppression du projet dans values.yaml
+       ↓
+Vérification finale
+```
+
+Le script vérifie également les erreurs pendant les opérations critiques afin d'éviter de continuer silencieusement en cas d'échec.
+
+#### 8. Mise à jour de `values.yaml`
+
+Si le chemin vers `values.yaml` est fourni, le projet est supprimé automatiquement de `projectsJson`.
+
+Avant la modification, le script crée une sauvegarde :
+
+```text
+doc-archiver-chart/values.yaml.bak
+```
+
+
+#### 9. Vérification finale
+
+Après la suppression, le script vérifie que :
+
+* le bucket n'existe plus ;
+* l'utilisateur MinIO n'existe plus ;
+* la policy n'existe plus ;
+* l'entrée du projet a été supprimée de `values.yaml`.
+
+Un résultat réussi doit ressembler à :
+
+```text
+=== Vérification finale ===
+✓ Bucket absent.
+✓ Utilisateur absent.
+✓ Policy absente.
+✓ Projet supprimé de values.yaml.
+
+============================================================
+✓ Projet 'projettest' supprimé.
+============================================================
+```
+
+#### Attention
+
+La suppression d'un projet est **définitive** pour les documents stockés dans son bucket. Vérifiez toujours le nom du projet, la ville et le bucket avant de confirmer.
+
+Le script ne nécessite **aucun rebuild Docker ni redéploiement Helm**, car `delete-project.sh` est exécuté directement depuis la machine où le projet est administré.
 
 ### Dépannage
 
