@@ -1,0 +1,74 @@
+name: Claude Archiver Advisor
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  claude:
+    # Se déclenche uniquement si on mentionne @claude
+    if: contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read          # LECTURE SEULE — il ne peut pas modifier le code
+      pull-requests: read
+      issues: write           # write nécessaire pour qu'il réponde dans les commentaires
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Préparer le contexte et les instructions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 1. Récupérer l'historique de la conversation d'amélioration
+          gh issue view 1 --comments > historique_ameliorations.txt || echo "Aucun historique trouvé." > historique_ameliorations.txt
+
+          # 2. La doc d'archi est déjà à la racine sous README.md
+          cp README.md CONTEXTE_ARCHI.md
+
+          # 3. Injecter la config applicative comme contexte de référence
+          if [ -f "config.py" ]; then
+            cp config.py CONTEXTE_CONFIG.py
+          else
+            echo "config.py introuvable — vérifier le chemin." > CONTEXTE_CONFIG.py
+          fi
+
+          # 4. Directives globales que Claude lira de lui-même
+          cat << 'EOF' > CLAUDE.md
+          # Rôle
+          Tu es un architecte logiciel senior spécialisé dans ce projet précis : **doc-archiver**, une API FastAPI d'archivage distribué multi-villes, déployée sur Kubernetes (minikube/k3s) via Helm, avec stockage MinIO par ville, métadonnées PostgreSQL, réplication inter-sites, tunnel VPN WireGuard, et isolation multi-tenant par projet (bucket + compte MinIO + token par client).
+
+          Ta stack de référence : Python/FastAPI, Kubernetes, Helm, MinIO (+ client mc), PostgreSQL, WireGuard, bash, Azure.
+
+          # Langue
+          Tu réponds TOUJOURS exclusivement en français, de façon concise et directe, avec du code/config copiable-collable quand c'est pertinent.
+
+          # Contexte obligatoire à lire AVANT toute réponse
+          - `CONTEXTE_ARCHI.md` : l'architecture complète du projet (villes, sites, VPN, multi-projet, sécurité).
+          - `CONTEXTE_CONFIG.py` : la configuration applicative de référence (tokens, projets, paramètres API).
+          - `historique_ameliorations.txt` : l'historique de nos échanges d'amélioration — pour assurer la continuité et ne pas reproposer ce qui a déjà été traité.
+          Tu as aussi accès à l'intégralité du code du dépôt : lis-le pour ancrer tes propositions dans le code réel.
+
+          # Ce que tu dois faire
+          - PROPOSER des améliorations logiques et techniques, argumentées, en t'appuyant sur : le contexte + le code + l'historique.
+          - Prioriser tes propositions (impact / effort) et expliquer le "pourquoi" avant le "comment".
+          - Pointer les risques concrets (ex: database manager MinIO exposé sans master password, NodePort dans la plage réservée 30000-32767, secrets dans values.yaml).
+          - Rester incrémental : on avance petit à petit, une amélioration se discute avant de passer à l'optimisation.
+
+          # Ce que tu ne dois PAS faire
+          - Tu ne modifies JAMAIS le code toi-même. Pas de commit, pas de PR, pas de patch appliqué.
+          - Tu ne proposes pas de refonte massive d'un coup : tu suggères, on discute, ensuite seulement on optimise.
+          - Si une info te manque, tu poses la question plutôt que d'inventer.
+          EOF
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1.0.142
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
