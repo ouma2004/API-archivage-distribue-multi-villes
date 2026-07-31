@@ -636,7 +636,7 @@ pour envoyer les requetes et verifier statuts + corps JSON.
   403) est un FAIL a documenter precisement : c'est exactement ce qu'on cherche.
 
 == LIVRABLE ==
-Redige un "Rapport E2E" final en Markdown avec OBLIGATOIREMENT deux tableaux :
+Redige un "Rapport E2E" final en Markdown avec OBLIGATOIREMENT ces tableaux :
 
 ### 1. Résumé d'exécution
 | Catégorie | Réussis ✅ | Anomalies ❌ | Total |
@@ -651,6 +651,15 @@ Redige un "Rapport E2E" final en Markdown avec OBLIGATOIREMENT deux tableaux :
 
 Dans 'Nom du Test', inclus TOUJOURS le numero du scenario entre parentheses.
 Ne liste dans le 2e tableau QUE les FAIL.
+
+### 3. Optimisations & ameliorations generales
+Apres les tableaux, ajoute une liste (3 a 6 points) d'idees d'optimisation et
+d'amelioration que TU proposes apres avoir teste l'API : performance (requetes,
+presigned URLs), robustesse (codes de statut incoherents, try/except avales),
+securite (isolation, tokens), qualite d'API (validation des params, messages
+d'erreur). Un point = un constat + une action suggeree, concret et actionnable.
+Ces idees sont GENERALES (pas rattachees a une anomalie precise).
+
 Sous le dernier tableau, ajoute : **Total : X/Y PASS**
 """
 
@@ -687,7 +696,14 @@ scenario, pour qu'une coupure ne perde jamais le travail deja fait.
 3. Un constat reflete TOUJOURS une observation reelle (statut/corps recu), jamais une supposition.
 
 == A LA TOUTE FIN SEULEMENT ==
-Ajoute le tableau recapitulatif :
+Ajoute d'abord une section d'idees d'optimisation GENERALES :
+
+## Optimisations & ameliorations generales
+(3 a 6 idees que TU proposes apres avoir teste : perf, robustesse, securite,
+qualite d'API. Un point = constat + action suggeree. Idees generales, pas
+rattachees a une anomalie precise.)
+
+Puis le tableau recapitulatif :
 
 ### Resume d'execution
 | Catégorie | Réussis ✅ | Anomalies ❌ | Total |
