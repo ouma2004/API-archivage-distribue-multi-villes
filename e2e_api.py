@@ -661,6 +661,17 @@ d'erreur). Un point = un constat + une action suggeree, concret et actionnable.
 Ces idees sont GENERALES (pas rattachees a une anomalie precise).
 
 Sous le dernier tableau, ajoute : **Total : X/Y PASS**
+
+== OU METTRE LE RAPPORT (IMPORTANT) ==
+Le rapport COMPLET (les 3 sections + le Total, en entier, sans rien tronquer)
+doit apparaitre A DEUX ENDROITS :
+  1. DANS TA REPONSE finale : colle l'INTEGRALITE du rapport Markdown. Ne renvoie
+     PAS un simple resume ni un renvoi vers un fichier — c'est ta reponse qui est
+     publiee telle quelle dans l'issue GitHub. Elle doit contenir tout le rapport.
+  2. AUSSI dans le fichier "reports/{API_NAME}_rapport.md" (meme contenu exact),
+     pour l'artifact.
+Autrement dit : ecris le fichier ET recopie tout dans ta reponse. Pas de version
+courte, pas de "voir le fichier" : le texte complet des deux cotes.
 """
 
 
@@ -760,25 +771,54 @@ def poster_rapport_github(rapport: str):
         print("[e2e_api] ⚠️  GITHUB_TOKEN manquant — rapport non poste (sauvegarde locale seulement)")
         return False
 
+    # GitHub limite un commentaire a ~65536 caracteres. Si le rapport depasse,
+    # on le decoupe en plusieurs commentaires (sur les sauts de ligne) pour tout
+    # garder dans l'issue plutot que tronquer.
+    LIMITE = 60000
+    if len(rapport) <= LIMITE:
+        morceaux = [rapport]
+    else:
+        morceaux = []
+        reste = rapport
+        while reste:
+            if len(reste) <= LIMITE:
+                morceaux.append(reste)
+                break
+            coupe = reste.rfind("\n", 0, LIMITE)
+            if coupe <= 0:
+                coupe = LIMITE
+            morceaux.append(reste[:coupe])
+            reste = reste[coupe:]
+
     url = f"https://api.github.com/repos/{GITHUB_REPO}/issues/{GITHUB_ISSUE_NUMBER}/comments"
-    payload = json.dumps({"body": rapport}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, method="POST", headers={
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json",
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            if resp.status == 201:
-                print(f"[e2e_api] ✅ Rapport poste dans Issue #{GITHUB_ISSUE_NUMBER}")
-                print(f"[e2e_api] 🔗 https://github.com/{GITHUB_REPO}/issues/{GITHUB_ISSUE_NUMBER}")
-                return True
-            print(f"[e2e_api] ❌ GitHub API : statut {resp.status}")
-            return False
-    except Exception as e:
-        print(f"[e2e_api] ❌ Erreur reseau GitHub : {e}")
-        return False
+    ok_total = True
+    for i, morceau in enumerate(morceaux):
+        corps = morceau
+        if len(morceaux) > 1:
+            corps = f"_(partie {i+1}/{len(morceaux)})_\n\n" + morceau
+        payload = json.dumps({"body": corps}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="POST", headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.status == 201:
+                    suffixe = f" (partie {i+1}/{len(morceaux)})" if len(morceaux) > 1 else ""
+                    print(f"[e2e_api] ✅ Rapport poste dans Issue #{GITHUB_ISSUE_NUMBER}{suffixe}")
+                else:
+                    print(f"[e2e_api] ❌ GitHub API : statut {resp.status}")
+                    ok_total = False
+        except Exception as e:
+            print(f"[e2e_api] ❌ Erreur reseau GitHub : {e}")
+            ok_total = False
+    if ok_total:
+        print(f"[e2e_api] 🔗 https://github.com/{GITHUB_REPO}/issues/{GITHUB_ISSUE_NUMBER}")
+    return ok_total
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
