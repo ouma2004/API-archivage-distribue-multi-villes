@@ -16,6 +16,18 @@ on:
         description: "Pistes a tester (ex: isolation,auth ou 'all')"
         required: true
         default: "all"
+      regenerer_contrat:
+        description: "Case 1 — Regenerer le contrat (decoche = reutilise le contrat committe, sinon le regenere)"
+        type: boolean
+        default: true
+      generer_sans_executer:
+        description: "Case 2 — Generer les scenarios SANS executer (s'arrete apres la generation)"
+        type: boolean
+        default: false
+      executer_existant:
+        description: "Case 3 — Executer les scenarios EXISTANTS committes (skip toute generation)"
+        type: boolean
+        default: false
       max_scenarios:
         description: "Plafond de scenarios (0 = illimite)"
         required: false
@@ -70,13 +82,26 @@ jobs:
         run: |
           npm i -g @anthropic-ai/claude-code
           npm i -D @playwright/test
-          npx playwright install --with-deps chromium
+          # Pas de navigateur : les tests sont en Playwright `request` (HTTP pur).
+          # On n'installe donc NI Chromium NI ses deps systeme (gain ~4 min/run).
 
-      # 2) Monter la topologie (le Dockerfile est a la racine, le compose build depuis .)
+      # ── Logique des 3 cases ──────────────────────────────────────────────
+      #  Case 1 regenerer_contrat      : ☑ regenere / ☐ reutilise (fallback regenere)
+      #  Case 2 generer_sans_executer  : ☑ genere scenarios puis STOP
+      #  Case 3 executer_existant      : ☑ skip toute generation, execute le committe
+      #
+      #  Derivees :
+      #   - on EXECUTE si NON generer_sans_executer      (case 2 decochee)
+      #   - on GENERE les scenarios si NON executer_existant (case 3 decochee)
+      #   - la stack Docker ne monte que si on execute
+
+      # 2) Monter la topologie SEULEMENT si on execute
       - name: Start stack (docker compose)
+        if: ${{ !inputs.generer_sans_executer }}
         run: docker compose -f docker-compose.test.yml up -d --build
 
       - name: Wait for API /health
+        if: ${{ !inputs.generer_sans_executer }}
         run: |
           for i in $(seq 1 60); do
             if curl -fsS http://localhost:30800/health >/dev/null 2>&1; then
@@ -86,13 +111,32 @@ jobs:
           done
           echo "API jamais prete"; docker compose -f docker-compose.test.yml logs api; exit 1
 
-      # 3) Passe 1 : analyse -> Contrat + pistes
+      # 3) Contrat.
+      #    - Case 3 (executer_existant) : on ne touche pas au contrat, on reutilise le committe.
+      #    - Sinon : on lance l'analyse. --reuse-if-exists si Case 1 decochee
+      #      (=> Claude reutilise le contrat committe s'il existe, sinon le regenere).
       - name: Analyse (Contrat)
-        run: python e2e_api.py --analyze
+        if: ${{ !inputs.executer_existant }}
+        run: |
+          if [ "${{ inputs.regenerer_contrat }}" = "true" ]; then
+            echo "Case 1 cochee -> regeneration du contrat"
+            python e2e_api.py --analyze
+          else
+            echo "Case 1 decochee -> reutilise le contrat committe s'il existe (sinon regenere)"
+            python e2e_api.py --analyze --reuse-if-exists
+          fi
 
-      # 4) Determiner les pistes : reponses.md committe sinon inputs
+      - name: Verifier contrat present
+        run: |
+          if [ ! -f "contrats/doc-archiver_contrat.json" ]; then
+            echo "❌ Aucun contrat trouve. Coche Case 1 (Regenerer le contrat) ou commit contrats/doc-archiver_contrat.json"; exit 1
+          fi
+          echo "✅ Contrat present"
+
+      # 4) Pistes (utile seulement si on genere des scenarios)
       - name: Resoudre pistes
         id: choix
+        if: ${{ !inputs.executer_existant }}
         run: |
           if [ -f "contrats/doc-archiver_reponses.md" ]; then
             echo "source=formulaire" >> $GITHUB_OUTPUT
@@ -105,8 +149,9 @@ jobs:
             echo "pistes=$P" >> $GITHUB_OUTPUT
           fi
 
-      # 5) Passe 2a : scenarios
+      # 5) Generer les scenarios (skip si Case 3 : on execute le committe)
       - name: Generer scenarios
+        if: ${{ !inputs.executer_existant }}
         run: |
           ARGS=""
           if [ -n "${{ steps.choix.outputs.pistes }}" ]; then ARGS="$ARGS --pistes=${{ steps.choix.outputs.pistes }}"; fi
@@ -115,8 +160,17 @@ jobs:
           echo "python e2e_api.py --generate-scenarios $ARGS"
           python e2e_api.py --generate-scenarios $ARGS
 
-      # 6) Passe 2b : execution + rapport en issue
+      - name: Verifier scenarios presents
+        if: ${{ !inputs.generer_sans_executer }}
+        run: |
+          if [ ! -f "contrats/doc-archiver_scenarios.md" ]; then
+            echo "❌ Aucun scenario trouve. Genere-les (decoche Case 3) ou commit contrats/doc-archiver_scenarios.md"; exit 1
+          fi
+          echo "✅ Scenarios presents"
+
+      # 6) Executer (skip si Case 2 : generer_sans_executer)
       - name: Executer + rapport
+        if: ${{ !inputs.generer_sans_executer }}
         run: |
           ARGS=""
           if [ -n "${{ steps.choix.outputs.pistes }}" ]; then ARGS="$ARGS --pistes=${{ steps.choix.outputs.pistes }}"; fi
@@ -136,7 +190,7 @@ jobs:
             reports/
             tests/
 
-      # 8) Teardown
+      # 8) Teardown (seulement si la stack a ete montee = on a execute)
       - name: Stop stack
-        if: always()
+        if: ${{ always() && !inputs.generer_sans_executer }}
         run: docker compose -f docker-compose.test.yml down -v
