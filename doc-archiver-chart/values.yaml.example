@@ -39,8 +39,6 @@ api:
   # silencieusement toutes les requêtes de ce projet (401/403 MinIO).
   projectsJson: '{"tok_projetA_a1b2c3d4":{"name":"ProjetA","bucket":"documents-projeta","access_key":"adminprojeta","secret_key":"CHANGEZ-MOI-SecretProjetA"},"tok_projetB_e5f6g7h8":{"name":"ProjetB","bucket":"documents-projetb","access_key":"adminprojetb","secret_key":"CHANGEZ-MOI-SecretProjetB"}}'
 
-
-  maxFileSizeMb: "50"
   service:
     type: NodePort
     nodePort: 30800
