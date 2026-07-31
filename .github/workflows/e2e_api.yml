@@ -60,7 +60,7 @@ jobs:
       LEGACY_TOKEN: test-legacy-token
       RAPPORT_LIVE: ${{ inputs.rapport_live }}
       GITHUB_REPO: ${{ github.repository }}
-      GITHUB_ISSUE_NUMBER: ${{ vars.E2E_ISSUE_NUMBER || '1' }}
+      GITHUB_ISSUE_NUMBER: "2"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     steps:
