@@ -1,0 +1,219 @@
+{
+  "api": "doc-archiver",
+  "base_url_hint": "http://localhost:30800",
+  "auth_modes": ["project", "admin", "legacy", "inter_site"],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "summary": "Ping de disponibilité, liste les villes actives et la version.",
+      "query_params": [],
+      "body": null,
+      "auth_accepted": ["none"],
+      "status_codes": {"200": "toujours (pas d'authentification requise)"},
+      "isolation_rule": null,
+      "source_method": "health",
+      "security_critical": false,
+      "in_scope": true
+    },
+    {
+      "method": "GET",
+      "path": "/whoami",
+      "summary": "Identifie le mode d'authentification effectif du token fourni (admin/project/legacy).",
+      "query_params": [],
+      "body": null,
+      "auth_accepted": ["project", "admin", "legacy"],
+      "status_codes": {
+        "200": "token valide (project/admin/legacy) — retourne mode + project_name",
+        "401": "token inconnu (ni admin, ni projet PROJECTS_JSON, ni API_TOKEN legacy) — verify_token",
+        "403": "token inter_site fourni ici : n'est pas reconnu par verify_token, donc en réalité 401 (le mode inter_site n'existe pas pour cet endpoint)"
+      },
+      "isolation_rule": null,
+      "source_method": "whoami",
+      "security_critical": true,
+      "in_scope": true,
+      "needs_human_check": "Un token inter-sites (INTER_SITE_TOKEN) envoyé sur /whoami : s'il diffère de tous les autres tokens, verify_token renverra 401 — confirmer que c'est le comportement attendu (aucun mode 'inter_site' n'est reconnu hors /api/replicate/*)."
+    },
+    {
+      "method": "POST",
+      "path": "/documents",
+      "summary": "Upload un ou plusieurs fichiers pour une ville donnée ; chaque fichier est traité indépendamment (succès partiel possible).",
+      "query_params": [
+        {"name": "ville", "required": true, "note": "doit appartenir à VILLES_VALIDES, sinon 400 (verify_ville)"},
+        {"name": "backup_ville", "required": false, "note": "ville de secours optionnelle, validée aussi par verify_ville si fournie"}
+      ],
+      "body": "multipart/form-data : champ 'files' = liste d'UploadFile (au moins 1 requis par FastAPI, 422 sinon). Aucune restriction de type/extension.",
+      "auth_accepted": ["project", "admin", "legacy"],
+      "status_codes": {
+        "200": "au moins un fichier archivé avec succès (uploaded non vide, errors peut être non vide en parallèle)",
+        "400": "ville ou backup_ville invalide (verify_ville) OU tous les fichiers ont échoué (ex: tous vides) -> uploaded vide",
+        "401": "token invalide (verify_token)",
+        "422": "champ 'files' absent ou 'ville' absent (validation FastAPI)"
+      },
+      "isolation_rule": "Le document créé est tagué avec le bucket de l'appelant (effective_bucket) : un projet ne peut créer un document que dans SON bucket ; un admin ou legacy créent un document sans project_bucket (bucket par défaut 'documents'). Pas de 403 possible ici (aucune ownership à vérifier en écriture).",
+      "source_method": "upload_document (délègue à _process_single_upload)",
+      "security_critical": true,
+      "in_scope": true,
+      "needs_human_check": "Le code retourne 200 dès qu'au moins un fichier sur plusieurs a réussi, même si d'autres ont échoué (ex: un fichier vide + un fichier valide dans le même appel) — le contrat de test doit-il valider ce cas mixte comme un succès partiel avec 'errors' non vide ?"
+    },
+    {
+      "method": "GET",
+      "path": "/documents",
+      "summary": "Liste les documents d'une ville, filtrés implicitement sur le bucket du token appelant.",
+      "query_params": [
+        {"name": "ville", "required": true, "note": "400 si invalide (verify_ville)"},
+        {"name": "file_type", "required": false, "note": "filtre exact sur l'extension stockée"},
+        {"name": "limit", "required": false, "note": "défaut 20, entier"},
+        {"name": "include_deleted", "required": false, "note": "défaut false ; inclut les documents à archive_state=DELETED si true"}
+      ],
+      "body": null,
+      "auth_accepted": ["project", "admin", "legacy"],
+      "status_codes": {
+        "200": "toujours si ville valide et token valide (liste vide possible, pas de 404)",
+        "400": "ville invalide (verify_ville)",
+        "401": "token invalide (verify_token)",
+        "422": "limit non entier ou include_deleted non booléen (validation FastAPI)"
+      },
+      "isolation_rule": "Isolation par FILTRAGE silencieux (pas de 403) : _bucket_filter renvoie le bucket du projet appelant, 'ALL' pour un admin, ou None pour legacy (seuls les documents sans project_bucket) ; get_documents applique ce filtre en SQL. Un projet ne verra donc JAMAIS les documents d'un autre projet dans cette liste, même s'ils existent dans la même ville.",
+      "source_method": "list_documents (utilise _bucket_filter et get_documents)",
+      "security_critical": true,
+      "in_scope": true
+    },
+    {
+      "method": "GET",
+      "path": "/documents/{doc_id}",
+      "summary": "Télécharge/stream le contenu d'un document (avec fallback vers le site de secours si le site primaire est indisponible).",
+      "query_params": [
+        {"name": "ville", "required": true, "note": "400 si invalide (verify_ville)"}
+      ],
+      "body": null,
+      "auth_accepted": ["project", "admin", "legacy"],
+      "status_codes": {
+        "200": "stream du fichier (StreamingResponse), lecture réussie sur le site primaire ou via fallback backup",
+        "400": "ville invalide (verify_ville)",
+        "401": "token invalide (verify_token)",
+        "403": "document trouvé mais project_bucket != bucket de l'appelant (_check_ownership), sauf admin",
+        "404": "doc_id absent de la base pour cette ville (get_document_full renvoie None)",
+        "410": "document existe mais archive_state == 'DELETED' (vérifié APRÈS l'ownership check)",
+        "503": "site primaire indisponible ET (pas de backup SYNCED disponible OU backup lui-même indisponible)"
+      },
+      "isolation_rule": "_check_ownership : 403 si doc_info['project_bucket'] != identity['bucket'] (identité non-admin). Pour la lecture MinIO elle-même, _effective_project_for_file_access traduit un admin en identifiants MinIO root + bucket réel du document (l'admin n'a pas de bucket propre).",
+      "source_method": "get_document (utilise _check_ownership, _effective_project_for_file_access)",
+      "security_critical": true,
+      "in_scope": true,
+      "needs_human_check": "L'ordre des vérifications est : 404 (absent) -> 403 (ownership) -> 410 (soft-deleted). Un document supprimé appartenant à un AUTRE projet renverra donc 403 (et non 410) — confirmer que cet ordre est le comportement voulu (ne pas révéler l'état de suppression avant l'ownership)."
+    },
+    {
+      "method": "PATCH",
+      "path": "/documents/{doc_id}",
+      "summary": "Renomme un document existant (nouveau filename dans le body JSON).",
+      "query_params": [
+        {"name": "ville", "required": true, "note": "400 si invalide (verify_ville)"}
+      ],
+      "body": "JSON {\"filename\": \"<nouveau nom>\"} — RenameRequest. filename vide/blanc après strip() -> 400.",
+      "auth_accepted": ["project", "admin", "legacy"],
+      "status_codes": {
+        "200": "renommage effectué, retourne {document_id, filename}",
+        "400": "ville invalide, OU filename vide/blanc après strip()",
+        "401": "token invalide (verify_token)",
+        "403": "document trouvé mais project_bucket != bucket appelant (_check_ownership), sauf admin",
+        "404": "doc_id absent (get_document_full renvoie None) OU document déjà supprimé (rename_document exclut archive_state='DELETED' en SQL et renvoie False)",
+        "422": "body JSON invalide ou champ filename manquant (validation Pydantic)"
+      },
+      "isolation_rule": "_check_ownership : 403 si doc_info['project_bucket'] != identity['bucket'] (sauf admin).",
+      "source_method": "rename_document_endpoint (utilise _check_ownership, rename_document)",
+      "security_critical": true,
+      "in_scope": true,
+      "needs_human_check": "Un document soft-deleted renvoie 404 sur PATCH (\"introuvable ou supprimé\") alors que le même document renvoie 410 sur GET /documents/{doc_id}. Incohérence de code de statut entre les deux endpoints pour le même état — à confirmer/documenter."
+    },
+    {
+      "method": "DELETE",
+      "path": "/documents/{doc_id}",
+      "summary": "Supprime un document : soft-delete par défaut (archive_state=DELETED), suppression physique irréversible si hard=true.",
+      "query_params": [
+        {"name": "ville", "required": true, "note": "400 si invalide (verify_ville)"},
+        {"name": "hard", "required": false, "note": "défaut false. true = suppression physique MinIO + ligne DB, irréversible"}
+      ],
+      "body": null,
+      "auth_accepted": ["project", "admin", "legacy"],
+      "status_codes": {
+        "200": "suppression effectuée (soft ou hard), retourne {document_id, archive_state: DELETED|HARD_DELETED}",
+        "400": "ville invalide (verify_ville)",
+        "401": "token invalide (verify_token)",
+        "403": "document trouvé mais project_bucket != bucket appelant (_check_ownership), sauf admin",
+        "404": "doc_id absent (get_document_full renvoie None) OU (hard=false) document déjà à l'état DELETED (soft_delete_document renvoie False)"
+      },
+      "isolation_rule": "_check_ownership : 403 si doc_info['project_bucket'] != identity['bucket'] (sauf admin). Pour l'accès MinIO en hard delete, _effective_project_for_file_access traduit un admin en identifiants root + bucket réel du document.",
+      "source_method": "delete_document_endpoint (utilise _check_ownership, soft_delete_document, delete_document, _effective_project_for_file_access)",
+      "security_critical": true,
+      "in_scope": true,
+      "needs_human_check": "Avec hard=true, delete_document supprime la ligne SANS filtrer sur archive_state : un document déjà soft-deleted peut donc être hard-deleted sans erreur 404 (contrairement au cas hard=false sur un doc déjà DELETED qui renvoie 404). Confirmer ce comportement asymétrique."
+    },
+    {
+      "method": "GET",
+      "path": "/file",
+      "summary": "Récupère un fichier MinIO directement par son chemin d'archive brut (sans passer par la base de données documents).",
+      "query_params": [
+        {"name": "ville", "required": true, "note": "400 si invalide (verify_ville)"},
+        {"name": "archive_path", "required": true, "note": "chemin MinIO brut, string libre, AUCUNE validation de format"}
+      ],
+      "body": null,
+      "auth_accepted": ["project", "admin", "legacy"],
+      "status_codes": {
+        "200": "stream du fichier trouvé dans le bucket résolu pour l'identité appelante",
+        "400": "ville invalide (verify_ville)",
+        "401": "token invalide (verify_token)",
+        "503": "toute exception lors de la lecture MinIO (chemin inexistant, bucket erroné, credentials invalides) — capturée génériquement, aucun 404 dédié"
+      },
+      "isolation_rule": "PAS de _check_ownership et PAS de lookup en base : le bucket est résolu uniquement depuis l'identité du token appelant (_resolve_bucket via project=identity brut, sans passer par _effective_project_for_file_access). Un projet ne peut lire QUE dans son propre bucket (déterminé par ses propres access_key/secret_key), mais AUCUNE vérification que le document existe/n'est pas supprimé dans la table documents — un archive_path connu d'un document soft-deleted resterait donc accessible.",
+      "source_method": "get_file_by_path",
+      "security_critical": true,
+      "in_scope": true,
+      "needs_human_check": "Un token ADMIN ({\"is_admin\": True}) est transmis TEL QUEL comme `project` à get_file_stream/_resolve_bucket, qui attendent un dict projet avec les clés 'bucket'/'access_key'/'secret_key'. Cela devrait lever un KeyError capturé par le except générique -> 503. Confirmer si un admin est censé pouvoir utiliser /file (et si oui, la traduction manquante _effective_project_for_file_access doit être ajoutée), ou si /file est volontairement réservé aux projets/legacy."
+    },
+    {
+      "method": "POST",
+      "path": "/api/replicate/{ville}",
+      "summary": "Réception d'une réplication inter-sites (usage interne API-vers-API uniquement).",
+      "query_params": [],
+      "body": "multipart : file + champs form source_ville, source_id_doc, file_type, nb_pages",
+      "auth_accepted": ["inter_site"],
+      "status_codes": {},
+      "isolation_rule": null,
+      "source_method": "receive_replication_for_ville",
+      "security_critical": true,
+      "in_scope": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/replicate/{ville}/by-path",
+      "summary": "Suppression propagée d'une copie de secours (usage interne API-vers-API uniquement).",
+      "query_params": [],
+      "body": null,
+      "auth_accepted": ["inter_site"],
+      "status_codes": {},
+      "isolation_rule": null,
+      "source_method": "delete_replica_by_path",
+      "security_critical": true,
+      "in_scope": false
+    }
+  ],
+  "cross_cutting_rules": [
+    {"rule": "verify_token : 401 si le token Bearer ne correspond ni au token admin (ADMIN_TOKEN), ni à un token projet connu (PROJECTS_JSON), ni au token legacy (API_TOKEN).", "source_method": "verify_token"},
+    {"rule": "_check_ownership : 403 si doc_info['project_bucket'] != identity['bucket'] de l'appelant ; toujours autorisé si identity['is_admin'] est vrai.", "source_method": "_check_ownership"},
+    {"rule": "_bucket_filter : détermine le filtre de listing — None pour legacy (documents sans projet uniquement), 'ALL' pour admin (aucun filtre), bucket du projet sinon.", "source_method": "_bucket_filter"},
+    {"rule": "verify_ville : 400 si la ville fournie en query n'appartient pas à VILLES_VALIDES.", "source_method": "verify_ville"},
+    {"rule": "_effective_project_for_file_access : pour un admin, traduit l'identité en identifiants MinIO root + bucket réel du document (un admin n'a pas de bucket propre) ; utilisé par GET/DELETE /documents/{doc_id} mais PAS par GET /file.", "source_method": "_effective_project_for_file_access"},
+    {"rule": "verify_inter_site_token : 401 si le token ne correspond pas exactement à INTER_SITE_TOKEN ; totalement indépendant de verify_token, réservé à /api/replicate/* (hors périmètre).", "source_method": "verify_inter_site_token"}
+  ],
+  "open_questions": [
+    "GET /file avec un token ADMIN : l'identité {'is_admin': True} est transmise telle quelle et devrait provoquer un KeyError interne -> 503. Est-ce le comportement voulu, ou un bug à corriger (comme cela a déjà été fait pour les autres endpoints via _effective_project_for_file_access) ?",
+    "GET /file ne vérifie jamais la table documents (pas d'ownership, pas d'archive_state) : un document soft-deleted reste-t-il récupérable via /file tant que l'archive_path exact est connu ? Comportement voulu ou faille fonctionnelle ?",
+    "PATCH /documents/{doc_id} sur un document déjà soft-deleted renvoie 404, alors que GET /documents/{doc_id} renvoie 410 pour ce même état. Incohérence assumée entre les deux endpoints ?",
+    "DELETE /documents/{doc_id} avec hard=true sur un document déjà soft-deleted (DELETED) réussit silencieusement (pas de 404), contrairement à hard=false sur le même état qui renvoie 404. Confirmer cette asymétrie.",
+    "L'ordre des vérifications sur GET /documents/{doc_id} est 404 -> 403 (ownership) -> 410 (deleted) : un document supprimé d'un AUTRE projet renvoie donc 403 et non 410, ne révélant pas son état de suppression à un tiers. Ce choix est-il volontaire (sécurité) ou un effet de bord de l'ordre du code ?",
+    "INTER_SITE_TOKEN retombe par défaut sur API_TOKEN si non explicitement configuré (config.py) : dans un déploiement qui n'a pas défini ce secret séparément, un token legacy client donnerait-il accès aux endpoints /api/replicate/* (hors périmètre de test, mais impacte l'isolation legacy/inter-site) ?",
+    "POST /documents renvoie 200 dès qu'au moins un fichier sur plusieurs a réussi, avec un tableau 'errors' pouvant contenir des échecs partiels (ex: fichier vide) dans la même réponse 200. Le contrat de test doit-il traiter ce cas comme un succès complet ou un succès partiel à valider explicitement ?",
+    "Le champ 'download_url' (POST/GET /documents) peut être null si generate_presigned_url échoue silencieusement (try/except avalé) : faut-il un scénario de test dédié pour ce cas de dégradation silencieuse ?"
+  ]
+}
